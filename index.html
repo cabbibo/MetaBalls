@@ -236,7 +236,7 @@ function init() {
 	var s = new THREE.Mesh( new THREE.IcosahedronGeometry( 100, 3 ) , material );
 	//scene.add(s );
 
-    initBlobs( 50 );
+    initBlobs( 500 );
     updateBlobs();
 
 	updateCubes( effect, 0, BLOBS );
@@ -382,20 +382,51 @@ function updateBlobs(){
 
   var f = controller.frame();
 
-  var p = new THREE.Vector3(100000,.5,.5);
-  if( f.hands[0] ){
 
-    var pos = f.interactionBox.normalizePoint( f.hands[0].palmPosition );
-    //console.log( pos );
-    p.fromArray( pos );
 
-  }
-  
-  //console.log( p );
-  BLOBS[0].position = p;
-  BLOBS[0].dFromEdge = .4;
+    for( var i = 0; i < 20; i++ ){
 
-  for( var i = 1; i < BLOBS.length; i++ ){
+      var oP = BLOBS[i].position.clone();
+      var dif = oP.clone().sub( new THREE.Vector3(.5, .5 , .5 ) );
+      dif.multiplyScalar( .1 );
+      oP.sub( dif );
+
+      var p = oP.clone();
+
+      if( f.hands[0] ){
+
+        var fing = Math.floor( i / 4 );
+        var joint  = i % 4;
+
+        var finger = f.hands[0].fingers[ fing ];
+        var j = finger.positions[ joint ];
+
+        var pos = f.interactionBox.normalizePoint( j );
+        var half = new THREE.Vector3( .5 , .5 , .5 );
+        var p= new THREE.Vector3();
+
+        var sP = p.fromArray( pos ).sub(half).multiplyScalar( .4 )
+        sP.add( half );
+
+        p = sP;
+
+      }
+
+        
+      //console.log( p );
+      BLOBS[i].position = p;
+      BLOBS[i].dFromEdge = .03;
+
+    }
+
+    /*var p = new THREE.Vector3();
+    var pPos = f.hands[0].palmPosition;
+    var pos = f.interactionBox.normalizePoint( pPos );
+    BLOBS[21].position = p.fromArray( pos );
+    BLOBS[21].dFromEdge = .5;*/
+
+
+  for( var i = 20; i < BLOBS.length; i++ ){
 
     var b = BLOBS[i];
 
@@ -441,7 +472,7 @@ function updateBlobs(){
     //b.dFromEdge = minDist;//1//Math.abs(1-d );
 
 
-    b.dFromEdge = .11;
+    b.dFromEdge = .08;
     // Defines the center
     var center = new THREE.Vector3( .5 , .5 , .5 );
 
@@ -475,7 +506,6 @@ function updateBlobs(){
 
 
   }
-
 
 }
 
