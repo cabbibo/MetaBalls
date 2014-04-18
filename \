@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>Bumpy Metaballs</title>
+        <style>
+          body{margin:0px;overflow:hidden;}
+          #container:{ position:absolute; left:0px; top:0px; padding:0px; margin:0px; }
+        </style>
+	</head>
+	<body>
+
+	
+		<div id="container"></div>
+		
+<script src="js/leap.min.js"></script>
+<script src="js/Three.js"></script>
+<script src="js/MarchingCubes.js"></script>
+<script src="js/Blob.js"></script>
+<script src="js/Stats.js"></script>
+<script src="js/ImprovedNoise.js"></script>
+<script src="js/TrackballControls.js"></script>
+
+<script type="x-shader/x-vertex" id="sphere-vs">
+
+void main() {
+	gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+}
+
+</script>
+
+<script type="x-shader/x-vertex" id="sphere-fs">
+
+uniform vec2 resolution;
+uniform float noise;
+uniform vec3 color;
+
+#define VIG_REDUCTION_POWER 1.
+#define VIG_BOOST 1.
+
+float random(vec3 scale,float seed){return fract(sin(dot(gl_FragCoord.xyz+seed,scale))*43758.5453+seed);}
+
+void main() {
+
+	vec2 center = resolution * 0.5;
+	float vignette = distance( center, gl_FragCoord.xy ) / resolution.x;
+	vignette = VIG_BOOST - vignette * VIG_REDUCTION_POWER;
+
+	float n = noise * ( .5 - random( vec3( 1. ), length( gl_FragCoord ) ) );
+
+	float v = .5 * length( vec2( gl_FragCoord.y / resolution.y, ( 1. - abs( .5 - gl_FragCoord.x / resolution.x ) ) ) );
+	vec3 base = color;
+	base += vec3( pow( v, 2. ) );
+	gl_FragColor = vec4( base * vec3( vignette ) + vec3( n ), 1. );
+
+}
+
+</script>
+
+
+<script type="x-shader/x-vertex" id="vertexShader">
+
+	varying vec3 vNormal;
+    varying vec4 vPosition;
+    varying vec4 vOPosition;
+	varying vec3 vONormal;
+    varying vec3 vU;
+    varying vec3 vEye;
+
+    void main() {
+
+        vOPosition = modelViewMatrix * vec4( position, 1.0 );
+        gl_Position = projectionMatrix * vOPosition;
+
+        vU = normalize( vec3( modelViewMatrix * vec4( position, 1.0 ) ) );
+
+        vPosition = vec4( position, 1.0 );
+        vNormal = normalMatrix * normal;
+        vONormal = normal;
+
+    }
+
+	</script>
+	
+	<script type="x-shader/x-vertex" id="fragmentShader">
+	
+	uniform sampler2D textureMap;
+    uniform sampler2D normalMap;
+    uniform vec3 color;
+    uniform float normalScale;
+    uniform float texScale;
+    uniform float useSSS;
+    uniform float useScreen;
+    uniform float time;
+
+    varying vec3 vNormal;
+    varying vec4 vPosition;
+    varying vec4 vOPosition;
+	varying vec3 vONormal;
+	varying vec3 vU;
+    varying vec3 vEye;
+
+	float random(vec3 scale,float seed){return fract(sin(dot(gl_FragCoord.xyz+seed,scale))*43758.5453+seed);}
+
+    void main() {
+
+        vec3 n = normalize( vONormal.xyz );
+        vec3 blend_weights = abs( n );
+        blend_weights = ( blend_weights - 0.2 ) * 7.;  
+        blend_weights = max( blend_weights, 0. );
+        blend_weights /= ( blend_weights.x + blend_weights.y + blend_weights.z );
+
+        vec2 coord1 = vPosition.yz * texScale;
+        vec2 coord2 = vPosition.zx * texScale;
+        vec2 coord3 = vPosition.xy * texScale;
+
+        vec3 bump1 = texture2D( normalMap, coord1 + vec2( time * .1 , time * .2 ) ).rgb;  
+        vec3 bump2 = texture2D( normalMap, coord2 + vec2( time * .13 , time * .083 ) ).rgb;  
+        vec3 bump3 = texture2D( normalMap, coord3 + vec2( time * .05 , time * .15 ) ).rgb; 
+
+        vec3 blended_bump = bump1 * blend_weights.xxx +  
+                            bump2 * blend_weights.yyy +  
+                            bump3 * blend_weights.zzz;
+
+        vec3 tanX = vec3( vNormal.x, -vNormal.z, vNormal.y);
+        vec3 tanY = vec3( vNormal.z, vNormal.y, -vNormal.x);
+        vec3 tanZ = vec3(-vNormal.y, vNormal.x, vNormal.z);
+        vec3 blended_tangent = tanX * blend_weights.xxx +  
+                               tanY * blend_weights.yyy +  
+                               tanZ * blend_weights.zzz; 
+
+        vec3 normalTex = blended_bump * 2.0 - 1.0;
+        normalTex.xy *= normalScale;
+        normalTex.y *= -1.;
+        normalTex = normalize( normalTex );
+        mat3 tsb = mat3( normalize( blended_tangent ), normalize( cross( vNormal, blended_tangent ) ), normalize( vNormal ) );
+        vec3 finalNormal = tsb * normalTex;
+
+        vec3 r = reflect( normalize( vU ), normalize( finalNormal ) );
+        float m = 2.0 * sqrt( r.x * r.x + r.y * r.y + ( r.z + 1.0 ) * ( r.z + 1.0 ) );
+        vec2 calculatedNormal = vec2( r.x / m + 0.5,  r.y / m + 0.5 );
+
+        vec3 base = texture2D( textureMap, calculatedNormal ).rgb;
+
+		float rim = 1.75 * max( 0., abs( dot( normalize( vNormal ), normalize( -vOPosition.xyz ) ) ) );
+		base += useSSS * color * ( 1. - .75 * rim );
+		base += ( 1. - useSSS ) * 10. * base * color * clamp( 1. - rim, 0., .15 );
+
+		if( useScreen == 1. ) {
+			base = vec3( 1. ) - ( vec3( 1. ) - base ) * ( vec3( 1. ) - base );
+		}
+
+		float nn = .05 * random( vec3( 1. ), length( gl_FragCoord ) );
+        base += vec3( nn );
+
+        gl_FragColor = vec4( base.rgb * ((vNormal*.5)+.5), .1 );
+
+
+    }
+	
+	</script>
+	
+<script>
+
+'use strict';
+
+var effect, resolution = 50, numBlobs = 200;
+var loading = document.getElementById( 'loading' );
+var container, controls, renderer, scene, camera, mesh, fov = 90, material, sphereMaterial;
+var start = Date.now();
+var distance = 300, ndistance = 150;
+var mouse,clock;
+var BLOBS = [];
+var controller,frame;
+
+window.addEventListener( 'load', init );
+
+var texture = 0;
+
+
+function init() {
+
+    mouse = {x:0,y:0}
+	container = document.getElementById( 'container' );
+
+    controller = new Leap.Controller();
+    controller.connect();
+
+	scene = new THREE.Scene();
+	scene.position = new THREE.Vector3( 0,0,0 );
+
+    clock = new THREE.Clock();
+
+	camera = new THREE.PerspectiveCamera( fov, window.innerWidth / window.innerHeight, .01, 100000 );
+	camera.position.z = 100;
+	camera.target = new THREE.Vector3( 0, 0, 0 );
+
+    controls = new THREE.TrackballControls( camera );
+
+	scene.add( camera );
+
+	renderer = new THREE.WebGLRenderer( { antialias: true } );
+	renderer.autoClear = false;
+	renderer.setSize( window.innerWidth, window.innerHeight );
+
+	renderer.gammaInput = true;
+	renderer.gammaOutput = true;
+	renderer.physicallyBasedShading = true;
+	
+	container.appendChild( renderer.domElement );
+	window.addEventListener( 'resize', onWindowResize, false );
+
+	material = new THREE.ShaderMaterial( {
+
+		uniforms: {
+            textureMap: { type: 't', value: null },
+            normalMap: { type: 't', value: null },
+            normalScale: { type: 'f', value: 1 },
+            time:{ type:'f',value:0},
+            texScale: { type: 'f', value: 5 },
+            useSSS: { type: 'f', value: 1 },
+            useScreen: { type: 'f', value: 0 },
+            color: { type: 'c', value: new THREE.Color( 0, 0, 0 ) }
+        },
+		vertexShader: document.getElementById( 'vertexShader' ).textContent,
+		fragmentShader: document.getElementById( 'fragmentShader' ).textContent,
+		side: THREE.DoubleSide
+		
+	} );
+
+	effect = new THREE.MarchingCubes( resolution, material, true, false );
+	effect.scale.set( 100, 100, 100 );
+
+	scene.add( effect );
+
+	var s = new THREE.Mesh( new THREE.IcosahedronGeometry( 100, 3 ) , material );
+	//scene.add(s );
+
+    initBlobs( 50 );
+    updateBlobs();
+
+	updateCubes( effect, 0, BLOBS );
+
+	sphereMaterial = new THREE.ShaderMaterial( {
+
+		uniforms: { 
+			resolution: { type: 'v2', value: new THREE.Vector2( 0, 0 ) },
+			noise: { type: 'f', value: .04 },
+			color: { type: 'c', value: new THREE.Color( 0, 0, 0 ) }
+		},
+		vertexShader: document.getElementById( 'sphere-vs' ).textContent,
+		fragmentShader: document.getElementById( 'sphere-fs' ).textContent,
+		side: THREE.BackSide
+		
+	} );
+
+	var sphere = new THREE.Mesh( new THREE.IcosahedronGeometry( 3000, 1 ), sphereMaterial );
+	scene.add( sphere );
+
+	var c = container;
+	function goFullscreen( e ) {
+		c.onwebkitfullscreenchange = function(e) {
+			c.onwebkitfullscreenchange = function() {
+			};
+		};
+		c.onmozfullscreenchange = function(e) {
+			c.onmozfullscreenchange = function() {
+			};
+		};
+		if( c.webkitRequestFullScreen ) c.webkitRequestFullScreen();
+		if( c.mozRequestFullScreen ) c.mozRequestFullScreen();
+		e.preventDefault();
+	}
+
+//	document.getElementById( 'fullscreenBtn' ).addEventListener( 'click', goFullscreen )
+	container.addEventListener( 'dblclick', goFullscreen );
+
+
+    //material.blending = THREE.AdditiveBlending;
+    //material.transparent = true;
+    //material.depthWrite = false;
+
+    material.uniforms.normalScale.value = 1;
+    material.uniforms.texScale.value = 5;
+    material.uniforms.useSSS.value = 1;
+    material.uniforms.useScreen.value = 0;
+    material.uniforms.textureMap.value = THREE.ImageUtils.loadTexture( 'matcap.jpg' );
+    material.uniforms.normalMap.value = THREE.ImageUtils.loadTexture( 'normals/08_normalmap.png' );
+    material.uniforms.color.value.setRGB( 181. / 255., 65. / 255., 52. / 255. );
+    sphereMaterial.uniforms.color.value.setRGB( 181. / 255., 65. / 255., 52. / 255. );
+
+    material.uniforms.textureMap.value.wrapS = material.uniforms.textureMap.value.wrapT = 
+	THREE.ClampToEdgeWrapping;
+
+	material.uniforms.normalMap.value.wrapS = material.uniforms.normalMap.value.wrapT = 
+	THREE.RepeatWrapping;
+	//switchTexture();
+
+
+	onWindowResize();
+	render();
+	
+}
+
+function updateCubes( object, time, blobs, floor, wallx, wallz ) {
+				
+  object.reset();
+      
+  // fill the field with some metaballs
+  
+  var i, ballx, bally, ballz, subtract, strength;
+  
+  subtract = 12;
+  strength = 5.2 / ( ( Math.sqrt( blobs.length ) - 1 ) / 4 + 1 );
+  
+  for ( i = 0; i < blobs.length; i++ ) {
+    var b = blobs[i];
+
+    object.addBall( b.position.x , b.position.y , b.position.z , strength * b.dFromEdge   , subtract );
+  }
+  
+  //if( floor ) 
+  object.addPlaneY( 2, 12 );
+  //object.addPlaneY( 2 ,12 );
+  //if( wallz ) 
+  object.addPlaneZ1( 2, 12 );
+  //if( wallx ) 
+  object.addPlaneX( 2, 12 );
+	
+};
+
+function onWindowResize() {
+  var s = 1;
+  renderer.setSize( s * window.innerWidth, s * window.innerHeight );
+  camera.projectionMatrix.makePerspective( fov, window.innerWidth / window.innerHeight, camera.near, camera.far );
+  sphereMaterial.uniforms.resolution.value.set( s * window.innerWidth, s * window.innerHeight );
+}
+
+
+
+var start = Date.now();
+
+
+function initBlobs( num ){
+
+  for( var i = 0; i < num; i++ ){
+
+    var b = new Blob();
+    b.randomPosition();
+    BLOBS.push( b );
+
+  }
+
+
+}
+/*function getBlobPositions(){
+
+  var frame = controller.frame();
+
+
+  if( frame.hands[0] ){
+
+
+
+
+  }else{
+
+
+  }
+
+
+
+
+}*/
+
+var FORCE = .00001;
+
+function updateBlobs(){
+
+  var f = controller.frame();
+
+  var p = new THREE.Vector3(.5,.5,.5);
+  if( f.hands[0] ){
+
+    var pos = f.interactionBox.normalizePoint( f.hands[0].palmPosition );
+    //console.log( pos );
+    p.fromArray( pos );
+
+  }
+
+  for( var i = 0; i < BLOBS.length; i++ ){
+
+    var b = BLOBS[i];
+
+    var force = new THREE.Vector3();
+
+    var dist = b.position.clone().sub( p.clone() ).multiplyScalar( FORCE * 100);
+
+    if( dist.length < .1 ){
+    force.add( dist );
+    }
+
+
+    var dir = [
+
+      [1,0,0],
+      [0,1,0],
+      [0,0,1],
+      [-1,0,0],
+      [0,-1,0],
+      [0,0,-1]
+
+
+    ]
+
+
+    var minDist = 1000000; 
+    /*for( var j = 0; j < 6; j++ ){
+
+      var pN = new THREE.Vector3().fromArray( dir[j] );
+      var offset = Math.floor( j / 3 );
+      var q = pN.clone().multiplyScalar( -offset );
+      var p = b.position.clone();
+      var v = p.sub( q );
+
+      var d = Math.abs( v.dot( pN ));
+
+      if( d < minDist ) minDist = d;
+      force.add( pN.multiplyScalar( 1/(d) ).multiplyScalar( FORCE / 10 ) );
+
+
+    }*/
+    //b.dFromEdge = minDist;//1//Math.abs(1-d );
+
+
+    b.dFromEdge = .11;
+    // Defines the center
+    var center = new THREE.Vector3( .5 , .5 , .5 );
+
+
+    //var dist = b.position.clone().sub( center ).multiplyScalar( .0001 );
+    //force.sub( dist );
+
+
+    for( var j = 0; j < BLOBS.length; j++ ){
+      if( i != j ){
+
+        var b1 = BLOBS[j];
+
+        var d = b.position.clone().sub( b1.position );
+
+        var l = d.length();
+
+        var sL = .5;
+
+        var x = l-sL
+        
+
+        force.sub( d.normalize().multiplyScalar( x * FORCE) );
+
+
+
+      }
+    }
+    //console.log( force );
+    //b.acceleration.add( force );
+    b.velocity.add( force );
+    b.position.add( b.velocity );
+    b.velocity.multiplyScalar( .9 );
+
+
+  }
+
+
+}
+
+
+function render() {
+
+    controls.update();
+
+    updateBlobs();
+    
+	updateCubes( effect, .0005 * ( Date.now() - start ), BLOBS );
+
+	material.uniforms.time.value += clock.getDelta();//.0001 * ( Date.now() - start );
+
+
+    renderer.render( scene, camera );
+
+    requestAnimationFrame( render );
+	
+}
+
+</script>
+
+	</body>
+</html>
