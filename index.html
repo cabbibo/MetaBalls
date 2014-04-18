@@ -92,6 +92,7 @@ void main() {
     uniform float useSSS;
     uniform float useScreen;
     uniform float time;
+    uniform vec3 center;
 
     varying vec3 vNormal;
     varying vec4 vPosition;
@@ -110,6 +111,7 @@ void main() {
         blend_weights = max( blend_weights, 0. );
         blend_weights /= ( blend_weights.x + blend_weights.y + blend_weights.z );
 
+        vec3 dFromCenter = vPosition.xyz - center;
         vec2 coord1 = vPosition.yz * texScale;
         vec2 coord2 = vPosition.zx * texScale;
         vec2 coord3 = vPosition.xy * texScale;
@@ -153,7 +155,7 @@ void main() {
 		float nn = .05 * random( vec3( 1. ), length( gl_FragCoord ) );
         base += vec3( nn );
 
-        gl_FragColor = vec4( base.rgb + vec3( .2 , 0. , .4), .1 );
+        gl_FragColor = vec4( base.rgb + .3 * length( dFromCenter ), .1 );
 
 
     }
@@ -192,7 +194,9 @@ function init() {
     clock = new THREE.Clock();
 
 	camera = new THREE.PerspectiveCamera( fov, window.innerWidth / window.innerHeight, .01, 100000 );
-	camera.position.z = 100;
+    camera.position.z = 100;
+    camera.position.x = 1; // To solve weird triplanar mapping issue
+    camera.position.y = 1; // To solve weird triplanar mapping issue
 	camera.target = new THREE.Vector3( 0, 0, 0 );
 
     controls = new THREE.TrackballControls( camera );
@@ -220,7 +224,8 @@ function init() {
             texScale: { type: 'f', value: 5 },
             useSSS: { type: 'f', value: 1 },
             useScreen: { type: 'f', value: 0 },
-            color: { type: 'c', value: new THREE.Color( 0, 0, 0 ) }
+            color: { type: 'c', value: new THREE.Color( 0, 0, 0 ) },
+            center: { type:'v3',value: new THREE.Vector3( .5 , .5 , .5 ) }
         },
 		vertexShader: document.getElementById( 'vertexShader' ).textContent,
 		fragmentShader: document.getElementById( 'fragmentShader' ).textContent,
@@ -383,6 +388,16 @@ function updateBlobs(){
   var f = controller.frame();
 
 
+  if( f.hands[0] ){
+
+    var p  = new THREE.Vector3();
+    var pPos = f.hands[0].palmPosition;
+    var pos = f.interactionBox.normalizePoint( pPos );
+
+
+    material.uniforms.center.value = p.fromArray( pos );
+
+  }
 
     for( var i = 0; i < 20; i++ ){
 
@@ -415,7 +430,7 @@ function updateBlobs(){
         
       //console.log( p );
       BLOBS[i].position = p;
-      BLOBS[i].dFromEdge = .03;
+      BLOBS[i].dFromEdge = .05;
 
     }
 
@@ -511,6 +526,8 @@ function updateBlobs(){
 
 
 function render() {
+
+    //var counter ++;
 
     controls.update();
 
